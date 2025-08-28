@@ -58,10 +58,17 @@ _closeTileLoopTemplate = NodeTemplate("""
 
 """)
 
+# _moveTileInTemplate = NodeTemplate("""
+
+# // IMPORT TILE ${innerTilePtr} from ${outerTilePtr}
+# dory_dma_memcpy_mindims_async(&${stateReference});
+
+# """)
+
 _moveTileInTemplate = NodeTemplate("""
 
 // IMPORT TILE ${innerTilePtr} from ${outerTilePtr}
-dory_dma_memcpy_mindims_async(&${stateReference});
+pulp_cl_idma_L1ToL2(${stateReference});
 
 """)
 
@@ -105,40 +112,77 @@ ${stateStruct.value['ext']} = bu_${stateReference}_ext;
 
 """)
 
+# _blockTileInTemplate = NodeTemplate("""
+
+# // BLOCKING IMPORT TILE ${innerTilePtr}
+# dory_dma_barrier(&${stateReference});
+
+# """)
+
 _blockTileInTemplate = NodeTemplate("""
 
 // BLOCKING IMPORT TILE ${innerTilePtr}
-dory_dma_barrier(&${stateReference});
+plp_cl_dma_barrier_toL2();
 
 """)
+
+# _moveTileOutTemplate = NodeTemplate("""
+
+# // EXPORT TILE ${innerTilePtr} to ${outerTilePtr}
+# dory_dma_memcpy_mindims_async(&${stateReference});
+
+# """)
 
 _moveTileOutTemplate = NodeTemplate("""
 
 // EXPORT TILE ${innerTilePtr} to ${outerTilePtr}
-dory_dma_memcpy_mindims_async(&${stateReference});
+pulp_cl_idma_L1ToL2(&${stateReference});
 
 """)
+
+# _blockTileOutTemplate = NodeTemplate("""
+
+# // BLOCKING EXPORT TILE ${innerTilePtr}
+# dory_dma_barrier(&${stateReference});
+
+# """)
 
 _blockTileOutTemplate = NodeTemplate("""
 
 // BLOCKING EXPORT TILE ${innerTilePtr}
-dory_dma_barrier(&${stateReference});
+plp_cl_dma_barrier_toL2();
 
 """)
+
+# _updateDMATransferStructTemplate = NodeTemplate("""
+
+# // UPDATE DMA STRUCT ${stateReference}
+# ${stateReference}.ext = ((char*)${extPtr}) + ${extOffsetPtr}[${tileNum}];
+# ${stateReference}.length_1d_copy = ${length1dPtr}[${tileNum}];
+# ${stateReference}.number_of_1d_copies = ${number1dPtr}[${tileNum}];
+# ${stateReference}.number_of_2d_copies = ${number2dPtr}[${tileNum}];
+
+# ${stateReference}.stride_1d = ${stride1dPtr}[${tileNum}];
+# ${stateReference}.stride_2d = ${stride2dPtr}[${tileNum}];
+
+# ${stateReference}.mchan_cmd = ${mchanCmdPtr}[${tileNum}];
+# """)
 
 _updateDMATransferStructTemplate = NodeTemplate("""
 
 // UPDATE DMA STRUCT ${stateReference}
-${stateReference}.ext = ((char*)${extPtr}) + ${extOffsetPtr}[${tileNum}];
-${stateReference}.length_1d_copy = ${length1dPtr}[${tileNum}];
-${stateReference}.number_of_1d_copies = ${number1dPtr}[${tileNum}];
-${stateReference}.number_of_2d_copies = ${number2dPtr}[${tileNum}];
-
-${stateReference}.stride_1d = ${stride1dPtr}[${tileNum}];
-${stateReference}.stride_2d = ${stride2dPtr}[${tileNum}];
-
-${stateReference}.mchan_cmd = ${mchanCmdPtr}[${tileNum}];
+${stateReference}.dst = ((char*)${extPtr}) + ${extOffsetPtr}[${tileNum}];
+${stateReference}.size = ${length1dPtr}[${tileNum}];
 """)
+
+# //${stateReference}.num_reps_2d = ${number1dPtr}[${tileNum}];
+# //${stateReference}.num_reps_3d = ${number2dPtr}[${tileNum}];
+
+# //${stateReference}.src_stride_2d = ${stride1dPtr}[${tileNum}];
+# //${stateReference}.dst_stride_2d = ${stride2dPtr}[${tileNum}];
+
+# //${stateReference}.src_stride_3d = ${stride1dPtr}[${tileNum}];
+# //${stateReference}.dst_stride_3d = ${stride2dPtr}[${tileNum}];
 
 _updateReferenceTemplate = NodeTemplate("""
 
@@ -147,22 +191,31 @@ _updateReferenceTemplate = NodeTemplate("""
 """)
 
 _initDMATemplate = NodeTemplate("""
-int32_t ${channelName} = dory_dma_allocate();
+int32_t ${channelName} = pulp_cl_idma_get_id_to_L2();
 """)
 
 _setDMAChannelTemplate = NodeTemplate("""
 ${stateReference}.tid = ${channelName};
 """)
 
+# _releaseDMATemplate = NodeTemplate("""
+# dory_dma_free(&${stateReference});
+# """)
+
 _releaseDMATemplate = NodeTemplate("""
-dory_dma_free(&${stateReference});
+plp_cl_dma_barrier_toL2();
 """)
 
 # ADD NUM TRANSFERS VARIABLE
 
+# _DMAUpdate = namedtuple(
+#     "_DMAUpdate",
+#     "extOffset locOffset length_1d_copy number_of_1d_copies number_of_2d_copies stride_1d stride_2d mchan_cmd")
+
+
 _DMAUpdate = namedtuple(
     "_DMAUpdate",
-    "extOffset locOffset length_1d_copy number_of_1d_copies number_of_2d_copies stride_1d stride_2d mchan_cmd")
+    "dst src size")
 
 
 class PULPClusterTilingSB(TilingCodeGeneration):
@@ -210,7 +263,7 @@ class PULPClusterTilingSB(TilingCodeGeneration):
                 else:
                     baseOffsets = tilingSchedule.inputBaseOffsets[key]
                     direction = "ToL1"
-
+                print ("Direction is ", direction)
                 if key not in updateDict.keys():
                     updateDict[key] = []
                 if key not in deltaOffsets.keys():
@@ -242,17 +295,30 @@ class PULPClusterTilingSB(TilingCodeGeneration):
                                                   finalMemoryLevel)
                     accOffset = calculateRectangleOffset(rect, referenceBuffer)
 
-                length_1d_copy = struct.value['length_1d_copy'].value
-                number_of_1d_copies = struct.value['number_of_1d_copies'].value
-                number_of_2d_copies = struct.value['number_of_2d_copies'].value
-                stride_1d = struct.value['stride_1d'].value
-                stride_2d = struct.value['stride_2d'].value
-                mchan_cmd = struct.value['mchan_cmd'].value
+                # length_1d_copy = struct.value['length_1d_copy'].value
+                # number_of_1d_copies = struct.value['number_of_1d_copies'].value
+                # number_of_2d_copies = struct.value['number_of_2d_copies'].value
+                # stride_1d = struct.value['stride_1d'].value
+                # stride_2d = struct.value['stride_2d'].value
+                # mchan_cmd = struct.value['mchan_cmd'].value
+
+                size = struct.value['size'].value
+                # length = struct.value['length'].value
+                # num_reps_2d = struct.value['num_reps_2d'].value
+                # num_reps_3d = struct.value['num_reps_3d'].value
+                # src_stride_2d = struct.value['src_stride_2d'].value
+                # dst_stride_2d = struct.value['dst_stride_2d'].value
+                # src_stride_3d = struct.value['src_stride_3d'].value
+                # dst_stride_3d = struct.value['dst_stride_3d'].value
 
                 lIdx = idx % len(baseOffsets)
 
-                sol = _DMAUpdate(accOffset, baseOffsets[lIdx], length_1d_copy, number_of_1d_copies, number_of_2d_copies,
-                                 stride_1d, stride_2d, mchan_cmd)
+                # sol = _DMAUpdate(accOffset, baseOffsets[lIdx], length_1d_copy, number_of_1d_copies, number_of_2d_copies,
+                #                  stride_1d, stride_2d, mchan_cmd)
+
+                # sol = _DMAUpdate(accOffset, baseOffsets[lIdx], size, length, num_reps_2d, num_reps_3d, src_stride_2d, dst_stride_2d, src_stride_3d, dst_stride_3d)
+
+                sol = _DMAUpdate(accOffset, baseOffsets[lIdx], size)
 
                 deltaOffsets[key] = accOffset
                 updateDict[key].append(sol)
@@ -273,46 +339,54 @@ class PULPClusterTilingSB(TilingCodeGeneration):
         else:
             _dir = 0
 
-        length_1d_copy = rect.dims[-1] * (referenceBuffer._type.referencedType.typeWidth // 8)
+        size = rect.dims[-1] * (referenceBuffer._type.referencedType.typeWidth // 8)
 
-        number_of_1d_copies = 1
-        stride_1d = 0
+        # num_reps_2d = 1
+        # stride_1d = 0
 
-        if len(rect.dims) > 1:
-            number_of_1d_copies = rect.dims[-2]
-            stride_1d = referenceRect.dims[-1] * (referenceBuffer._type.referencedType.typeWidth // 8)
+        # if len(rect.dims) > 1:
+        #     num_reps_2d = rect.dims[-2]
+        #     stride_1d = referenceRect.dims[-1] * (referenceBuffer._type.referencedType.typeWidth // 8)
 
-            if not finalMemoryLevel:
-                stride_1d = length_1d_copy
+        #     if not finalMemoryLevel:
+        #         stride_1d = size
 
-        number_of_2d_copies = 1
-        stride_2d = 0
+        # number_of_2d_copies = 1
+        # stride_2d = 0
 
-        if len(rect.dims) > 2:
-            number_of_2d_copies = rect.dims[-3]
-            stride_2d = referenceRect.dims[-2] * stride_1d
+        # if len(rect.dims) > 2:
+        #     number_of_2d_copies = rect.dims[-3]
+        #     stride_2d = referenceRect.dims[-2] * stride_1d
 
-        length_2d_copy = number_of_1d_copies * length_1d_copy
-        mchan_flags = _dir + 0x2 + 0x8
-        if number_of_1d_copies > 1 or number_of_2d_copies > 1:
-            mchan_flags += 0x4
-        mchan_cmd = length_2d_copy + (mchan_flags << 17)
+        # length_2d_copy = num_reps_2d * size
+        # mchan_flags = _dir + 0x2 + 0x8
+        # if num_reps_2d > 1 or number_of_2d_copies > 1:
+        #     mchan_flags += 0x4
+        # mchan_cmd = length_2d_copy + (mchan_flags << 17)
 
-        assert length_2d_copy <= 2**17, f"The DMA transfer size for mchan should be representable with 17 bits, current number of bits required is {np.ceil(np.log2(length_2d_copy))}"
+        # assert length_2d_copy <= 2**17, f"The DMA transfer size for mchan should be representable with 17 bits, current number of bits required is {np.ceil(np.log2(length_2d_copy))}"
 
+        # struct = PULPStructDataTypes.DMA_copy(
+        #     {
+        #         "ext": referenceBuffer.name,
+        #         "loc": L1Name,
+        #         "hwc_to_chw": 0,
+        #         "stride_2d": stride_2d,
+        #         "number_of_2d_copies": number_of_2d_copies,
+        #         "stride_1d": stride_1d,
+        #         "num_reps_2d": num_reps_2d,
+        #         "size": size,
+        #         "mchan_cmd": mchan_cmd,
+        #         "dir": _dir,
+        #         "tid": 0
+        #     }, ctxt)
+        
+    # For now L1 is considered as source location, L2 as destination location
         struct = PULPStructDataTypes.DMA_copy(
             {
-                "ext": referenceBuffer.name,
-                "loc": L1Name,
-                "hwc_to_chw": 0,
-                "stride_2d": stride_2d,
-                "number_of_2d_copies": number_of_2d_copies,
-                "stride_1d": stride_1d,
-                "number_of_1d_copies": number_of_1d_copies,
-                "length_1d_copy": length_1d_copy,
-                "mchan_cmd": mchan_cmd,
-                "dir": _dir,
-                "tid": 0
+                "dst": referenceBuffer.name,
+                "src": L1Name,
+                "size": size
             }, ctxt)
 
         return struct
@@ -346,6 +420,79 @@ class PULPClusterTilingSB(TilingCodeGeneration):
 
         return ctxt, operatorRepresentation
 
+    # def _hoistDMAUpdates(self, ctxt: NetworkContext, tensorName: str, updateList: List[_DMAUpdate],
+    #                      operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict]:
+
+    #     operatorRepresentation = operatorRepresentation.copy()
+
+    #     nodeName = operatorRepresentation['nodeName']
+
+    #     offsetList = []
+    #     mchanCmdList = []
+    #     len1dList = []
+    #     num1dList = []
+    #     num2dList = []
+    #     stride1dList = []
+    #     stride2dList = []
+    #     for update in updateList:
+    #         offsetList.append(int(update.extOffset))
+    #         mchanCmdList.append(int(update.mchan_cmd))
+    #         len1dList.append(int(update.length_1d_copy))
+    #         num1dList.append(int(update.number_of_1d_copies))
+    #         num2dList.append(int(update.number_of_2d_copies))
+    #         stride1dList.append(int(update.stride_1d))
+    #         stride2dList.append(int(update.stride_2d))
+
+    #     dmaName = self._DMAStructName(tensorName, nodeName)
+    #     operatorRepresentation['stateReference'] = dmaName
+    #     operatorRepresentation['tileNum'] = "TILING_I"
+    #     operatorRepresentation['extPtr'] = ctxt.lookup(operatorRepresentation[tensorName])._referenceName
+
+    #     namePrefix = self.prefix + f"{nodeName}_{tensorName}"
+
+    #     name = namePrefix + "_offset"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], offsetList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(ctxt, cb, operatorRepresentation, nodeName,
+    #                                                                    'extOffsetPtr')
+
+    #     name = namePrefix + "_mchan_cmd"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], mchanCmdList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'mchanCmdPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['mchan_cmd'])
+
+    #     name = namePrefix + "_length_1d_copy"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], len1dList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'length1dPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['length_1d_copy'])
+
+    #     name = namePrefix + "_number_of_1d_copies"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], num1dList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'number1dPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['number_of_1d_copies'])
+
+    #     name = namePrefix + "_number_of_2d_copies"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], num2dList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'number2dPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['number_of_2d_copies'])
+
+    #     name = namePrefix + "_stride_1d"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], stride1dList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'stride1dPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['stride_1d'])
+
+    #     name = namePrefix + "_stride_2d"
+    #     cb = ctxt.ConstantBuffer(name, [len(updateList)], stride2dList)
+    #     ctxt, operatorRepresentation = self._hoistConstantAndReference(
+    #         ctxt, cb, operatorRepresentation, nodeName, 'stride2dPtr',
+    #         PULPStructDataTypes.DMA_copy.structTypeDict['stride_2d'])
+
+    #     return ctxt, operatorRepresentation
+
     def _hoistDMAUpdates(self, ctxt: NetworkContext, tensorName: str, updateList: List[_DMAUpdate],
                          operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict]:
 
@@ -354,20 +501,16 @@ class PULPClusterTilingSB(TilingCodeGeneration):
         nodeName = operatorRepresentation['nodeName']
 
         offsetList = []
-        mchanCmdList = []
         len1dList = []
-        num1dList = []
-        num2dList = []
-        stride1dList = []
-        stride2dList = []
+
         for update in updateList:
-            offsetList.append(int(update.extOffset))
-            mchanCmdList.append(int(update.mchan_cmd))
-            len1dList.append(int(update.length_1d_copy))
-            num1dList.append(int(update.number_of_1d_copies))
-            num2dList.append(int(update.number_of_2d_copies))
-            stride1dList.append(int(update.stride_1d))
-            stride2dList.append(int(update.stride_2d))
+            offsetList.append(int(update.dst))
+            # mchanCmdList.append(int(update.mchan_cmd))
+            len1dList.append(int(update.size))
+            # num1dList.append(int(update.number_of_1d_copies))
+            # num2dList.append(int(update.number_of_2d_copies))
+            # stride1dList.append(int(update.stride_1d))
+            # stride2dList.append(int(update.stride_2d))
 
         dmaName = self._DMAStructName(tensorName, nodeName)
         operatorRepresentation['stateReference'] = dmaName
@@ -381,41 +524,11 @@ class PULPClusterTilingSB(TilingCodeGeneration):
         ctxt, operatorRepresentation = self._hoistConstantAndReference(ctxt, cb, operatorRepresentation, nodeName,
                                                                        'extOffsetPtr')
 
-        name = namePrefix + "_mchan_cmd"
-        cb = ctxt.ConstantBuffer(name, [len(updateList)], mchanCmdList)
-        ctxt, operatorRepresentation = self._hoistConstantAndReference(
-            ctxt, cb, operatorRepresentation, nodeName, 'mchanCmdPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['mchan_cmd'])
-
-        name = namePrefix + "_length_1d_copy"
+        name = namePrefix + "size"
         cb = ctxt.ConstantBuffer(name, [len(updateList)], len1dList)
         ctxt, operatorRepresentation = self._hoistConstantAndReference(
             ctxt, cb, operatorRepresentation, nodeName, 'length1dPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['length_1d_copy'])
-
-        name = namePrefix + "_number_of_1d_copies"
-        cb = ctxt.ConstantBuffer(name, [len(updateList)], num1dList)
-        ctxt, operatorRepresentation = self._hoistConstantAndReference(
-            ctxt, cb, operatorRepresentation, nodeName, 'number1dPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['number_of_1d_copies'])
-
-        name = namePrefix + "_number_of_2d_copies"
-        cb = ctxt.ConstantBuffer(name, [len(updateList)], num2dList)
-        ctxt, operatorRepresentation = self._hoistConstantAndReference(
-            ctxt, cb, operatorRepresentation, nodeName, 'number2dPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['number_of_2d_copies'])
-
-        name = namePrefix + "_stride_1d"
-        cb = ctxt.ConstantBuffer(name, [len(updateList)], stride1dList)
-        ctxt, operatorRepresentation = self._hoistConstantAndReference(
-            ctxt, cb, operatorRepresentation, nodeName, 'stride1dPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['stride_1d'])
-
-        name = namePrefix + "_stride_2d"
-        cb = ctxt.ConstantBuffer(name, [len(updateList)], stride2dList)
-        ctxt, operatorRepresentation = self._hoistConstantAndReference(
-            ctxt, cb, operatorRepresentation, nodeName, 'stride2dPtr',
-            PULPStructDataTypes.DMA_copy.structTypeDict['stride_2d'])
+            PULPStructDataTypes.DMA_copy.structTypeDict['size'])
 
         return ctxt, operatorRepresentation
 

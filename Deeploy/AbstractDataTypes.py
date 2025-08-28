@@ -473,7 +473,7 @@ class Struct(BaseType[Union[str, Dict[str, _DeeployType]], _StructType]):
             struct of layout structTypeDict
 
         """
-
+        print ("Structure is being initialized with value: ", structDict)
         if not self.checkPromotion(structDict, ctxt):
             raise Exception(f"Can't assign {structDict} to {type(self)}!")
 

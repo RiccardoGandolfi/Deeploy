@@ -42,20 +42,28 @@ _DMADispatchTemplate = NodeTemplate("""
 """)
 
 
+# class DMA_copy(Struct):
+#     typeName = "DMA_copy"
+#     structTypeDict = {
+#         "ext": PointerClass(VoidType),
+#         "loc": PointerClass(VoidType),
+#         "hwc_to_chw": uint16_t,
+#         "stride_2d": uint16_t,
+#         "number_of_2d_copies": uint16_t,
+#         "stride_1d": uint16_t,
+#         "number_of_1d_copies": uint16_t,
+#         "length_1d_copy": uint32_t,
+#         "mchan_cmd": uint32_t,
+#         "dir": int32_t,
+#         "tid": int32_t
+#     }
+
 class DMA_copy(Struct):
     typeName = "DMA_copy"
     structTypeDict = {
-        "ext": PointerClass(VoidType),
-        "loc": PointerClass(VoidType),
-        "hwc_to_chw": uint16_t,
-        "stride_2d": uint16_t,
-        "number_of_2d_copies": uint16_t,
-        "stride_1d": uint16_t,
-        "number_of_1d_copies": uint16_t,
-        "length_1d_copy": uint32_t,
-        "mchan_cmd": uint32_t,
-        "dir": int32_t,
-        "tid": int32_t
+        "dst": PointerClass(VoidType),
+        "src": PointerClass(VoidType),
+        "size": uint32_t
     }
 
 
