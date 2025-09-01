@@ -63,7 +63,8 @@ class DMA_copy(Struct):
     structTypeDict = {
         "dst": PointerClass(VoidType),
         "src": PointerClass(VoidType),
-        "size": uint32_t
+        "size": uint32_t,
+        "direction": uint32_t
     }
 
 

@@ -258,8 +258,8 @@ PULPOptimizer = TopologyOptimizer([
 # ]
 
 _includeList = [
-    "pmsis.h", "../../../toolchain/pulp-sdk/rtos/pulpos/pulp_hal/include/hal/dma/idma_v2.h", "stdint.h", "pulp_nn_kernels.h", "DeeployBasicMath.h", "DeeployPULPMath.h",
-    "bsp/ram.h", "pulp_core.h"
+    "pmsis.h", "stdint.h", "pulp_nn_kernels.h", "DeeployBasicMath.h", "DeeployPULPMath.h",
+    "bsp/ram.h", "pulp_core.h", "/scratch/riccardo.gandolfi/work/pulp/pulp-sdk/rtos/pulpos/pulp_hal/include/hal/dma/idma_v2.h"
 ]
 
 

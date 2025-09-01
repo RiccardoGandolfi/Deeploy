@@ -62,12 +62,12 @@ void CompareFloatOnCluster(void *args) {
       float expected_val = expected[i];
       float actual_val = actual[i];
       float diff = expected_val - actual_val;
+      printf("Expected: %10.6f @0x%8x ", expected_val, &expected[i]);
+      printf("Actual: %10.6f @0x%8x ", actual_val, &actual[i]);
 
       if ((diff < -1e-4) || (diff > 1e-4) || isnan(diff)) {
         local_err_count += 1;
 
-        printf("Expected: %10.6f  ", expected_val);
-        printf("Actual: %10.6f  ", actual_val);
         printf("Diff: %10.6f at Index %12u in Output %u\r\n", diff, i,
                output_buf_index);
       }
@@ -170,11 +170,10 @@ void main(void) {
         OUTPUTTYPE expected = ((OUTPUTTYPE *)testOutputVector[buf])[i];
         OUTPUTTYPE actual = ((OUTPUTTYPE *)compbuf)[i];
         OUTPUTTYPE diff = expected - actual;
-
         if (diff) {
           tot_err += 1;
-          printf("Expected: %4d  ", expected);
-          printf("Actual: %4d  ", actual);
+          printf("Expected: %4d  @0x%8x   ", expected, &(((OUTPUTTYPE *)testOutputVector[buf])[i]));
+          printf("Actual: %4d  @0x%8x   ", actual, &(((OUTPUTTYPE *)compbuf)[i]));
           printf("Diff: %4d at Index %12u in Output %u\r\n", diff, i, buf);
         }
       }

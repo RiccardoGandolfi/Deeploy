@@ -68,9 +68,16 @@ _closeTileLoopTemplate = NodeTemplate("""
 _moveTileInTemplate = NodeTemplate("""
 
 // IMPORT TILE ${innerTilePtr} from ${outerTilePtr}
-pulp_cl_idma_L1ToL2(${stateReference});
+pulp_cl_idma_transfer(${stateReference});
 
 """)
+
+# _blockTileInTemplate = NodeTemplate("""
+
+# // BLOCKING IMPORT TILE ${innerTilePtr}
+# plp_cl_dma_barrier_toL2();
+
+# """)
 
 _iteratedMoveTileInTemplate = NodeTemplate("""
 
@@ -99,7 +106,7 @@ uint16_t ${nodeName}_${tensorName}_dimLen_${idx} = ${dimLen}[${tileNum}];
 for(int i_${idx} = 0; i_${idx} < ${nodeName}_${tensorName}_dimLen_${idx}; i_${idx}++){
 %endfor
 ${stateStruct.typeName} trans_${stateReference} = (${stateStruct.typeName}) ${str(stateStruct)};
-dory_dma_memcpy_mindims_async(&trans_${stateReference});
+pulp_cl_idma_transfer(&trans_${stateReference});
 ${stateStruct.value['loc']} = (((int8_t*) ${stateStruct.value['loc']}) + ${_locStride});
 % for idx, _ in enumerate(dimLens):
 ${stateStruct.value['ext']} = (((int8_t*) ${stateStruct.value['ext']}) + (${_extStrides[idx]}));
@@ -119,13 +126,6 @@ ${stateStruct.value['ext']} = bu_${stateReference}_ext;
 
 # """)
 
-_blockTileInTemplate = NodeTemplate("""
-
-// BLOCKING IMPORT TILE ${innerTilePtr}
-plp_cl_dma_barrier_toL2();
-
-""")
-
 # _moveTileOutTemplate = NodeTemplate("""
 
 # // EXPORT TILE ${innerTilePtr} to ${outerTilePtr}
@@ -136,7 +136,7 @@ plp_cl_dma_barrier_toL2();
 _moveTileOutTemplate = NodeTemplate("""
 
 // EXPORT TILE ${innerTilePtr} to ${outerTilePtr}
-pulp_cl_idma_L1ToL2(&${stateReference});
+pulp_cl_idma_L1ToL2(${stateReference});
 
 """)
 
@@ -171,7 +171,7 @@ plp_cl_dma_barrier_toL2();
 _updateDMATransferStructTemplate = NodeTemplate("""
 
 // UPDATE DMA STRUCT ${stateReference}
-${stateReference}.dst = ((char*)${extPtr}) + ${extOffsetPtr}[${tileNum}];
+${stateReference}.src = ((char*)${extPtr}) + ${extOffsetPtr}[${tileNum}];
 ${stateReference}.size = ${length1dPtr}[${tileNum}];
 """)
 
@@ -203,7 +203,6 @@ ${stateReference}.tid = ${channelName};
 # """)
 
 _releaseDMATemplate = NodeTemplate("""
-plp_cl_dma_barrier_toL2();
 """)
 
 # ADD NUM TRANSFERS VARIABLE
@@ -227,7 +226,7 @@ class PULPClusterTilingSB(TilingCodeGeneration):
 
     _moveTileInTemplate = _moveTileInTemplate
     _iteratedMoveTileInTemplate = _iteratedMoveTileInTemplate
-    _blockTileInTemplate = _blockTileInTemplate
+    # _blockTileInTemplate = _blockTileInTemplate
 
     _moveTileOutTemplate = _moveTileOutTemplate
     _blockTileOutTemplate = _blockTileOutTemplate
@@ -386,7 +385,8 @@ class PULPClusterTilingSB(TilingCodeGeneration):
             {
                 "dst": referenceBuffer.name,
                 "src": L1Name,
-                "size": size
+                "size": size,
+                "direction": _dir
             }, ctxt)
 
         return struct
@@ -662,10 +662,10 @@ class PULPClusterTilingSB(TilingCodeGeneration):
             if permName in operatorRepresentation and direction == "ToL1":
 
                 DMATransferCalls.append(CodeSnippet(self._iteratedMoveTileInTemplate, transferNodeRep))
+                # DMAWaitStatements.append(CodeSnippet(self._blockTileInTemplate, transferNodeRep))
             else:
                 DMATransferCalls.append(CodeSnippet(self._moveTileInTemplate, transferNodeRep))
-
-            DMAWaitStatements.append(CodeSnippet(self._blockTileInTemplate, transferNodeRep))
+                # DMAWaitStatements.append(CodeSnippet(self._blockTileInTemplate, transferNodeRep))
 
         return DMATransferCalls, DMAWaitStatements
 
